@@ -11,7 +11,6 @@ import torch.optim as optim
 class ActorNetwork(nn.Module):
     def __init__(self, obs_shape, action_shape):
         super(ActorNetwork, self).__init__()
-        print("Shape", obs_shape)
         self.fc1 = nn.Linear(obs_shape[0]*obs_shape[1], 128)
         self.fc2 = nn.Linear(128, 64)
         self.fc3 = nn.Linear(64, action_shape)
@@ -19,10 +18,7 @@ class ActorNetwork(nn.Module):
     def forward(self, x):
         if isinstance(x, np.ndarray):
             x = torch.tensor(x, dtype=torch.float)
-        print("Size",x.size())
-        # x = x.view(x.size(0), -1)
         x = x.view(1, 105)
-        #x = torch.flatten(x, start_dim=1)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = F.softmax(self.fc3(x), dim=-1)
@@ -64,8 +60,6 @@ class PPO:
         self.actor_optimizer = Adam(self.actor.parameters(), lr=self.lr, eps=1e-5)  
         self.critic_optimizer = Adam(self.critic.parameters(), lr=self.lr,eps=1e-5)
 
-        print(self.actor)
-        print(self.critic)
         self.logger = {
 			'delta_t': time.time_ns(),
 			't_so_far': 0,          # timesteps so far
@@ -74,11 +68,11 @@ class PPO:
 			'batch_rews': [],       # episodic returns in batch
 			'actor_losses': [],     # losses of actor network in current iteration
 		}
-        self.learn(1)
+        self.learn(10)
 
     def learn(self, total_timesteps):
-        self.timesteps_per_batch = 10 #4800                 # Number of timesteps to run per batch
-        self.max_timesteps_per_episode = 1#1600           # Max number of timesteps per episode
+        self.timesteps_per_batch = 4800                 # Number of timesteps to run per batch
+        self.max_timesteps_per_episode = 1600           # Max number of timesteps per episode
         self.n_updates_per_iteration = 5                # Number of times to update actor/critic per iteration
         self.lr = 0.005                                 # Learning rate of actor optimizer
         self.gamma = 0.95                               # Discount factor to be applied when calculating Rewards-To-Go
@@ -104,15 +98,14 @@ class PPO:
             i_so_far += 1
 
             # Logging timesteps so far and iterations so far
-            # self.logger['t_so_far'] = t_so_far
-            # self.logger['i_so_far'] = i_so_far
+            self.logger['t_so_far'] = t_so_far
+            self.logger['i_so_far'] = i_so_far
 
             # Calculate advantage at k-th iteration
             log_prob, V, entropy= self.evaluate(batch_obs, batch_acts)
-            print(V)
+            print("V", V)
             A_k = batch_rtgs - V.detach()                                                                       # ALG STEP 5
             A_k = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
-            print("A_k", A_k)
             
             # This is the loop where we update our network for some n epochs
             for _ in range(self.n_updates_per_iteration):                                                       # ALG STEP 6 & 7
@@ -120,7 +113,8 @@ class PPO:
                 curr_log_probs, V, curr_entropy = self.evaluate(batch_obs, batch_acts)
 
                 ratios = torch.exp(curr_log_probs - batch_log_probs)
-
+                ratios.requires_grad = True
+                A_k.requires_grad = True
                 # Calculate surrogate losses.
                 surr1 = ratios * A_k
                 surr2 = torch.clamp(ratios, 1 - self.clip, 1 + self.clip) * A_k
@@ -137,13 +131,12 @@ class PPO:
                 self.critic_optimizer.zero_grad()
                 critic_loss.backward()
                 self.critic_optimizer.step()
-                print(actor_loss.detach())
 
-            #     # Log actor loss
-            #     self.logger['actor_losses'].append(actor_loss.detach())
+                # Log actor loss
+                self.logger['actor_losses'].append(actor_loss.detach())
 
-            # # Print a summary of our training so far
-            # self._log_summary()
+            # Print a summary of our training so far
+            self._log_summary()
 
             # Save our model if it's time
             if i_so_far % self.save_freq == 0:
@@ -226,11 +219,11 @@ class PPO:
         return action.item(), log_prob
     
     def evaluate(self, obs, action):
+        print("Size-1", obs.size()[0], obs.size()[1], obs.size()[2])
+        obs = obs.view(obs.size()[0] * obs.size()[1], obs.size()[2])[:obs.size()[1],:]
         with torch.no_grad():
             dist = self.actor(obs)
             log_prob = dist.log_prob(action)
-        # dist = self.actor(obs)
-        # log_prob = dist.log_prob(action)
         value = self.critic(obs)
         entropy = dist.entropy()
         return log_prob, value, entropy
